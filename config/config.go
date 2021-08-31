@@ -246,6 +246,7 @@ type PprofProfilingConfig struct {
 	Enabled *bool  `yaml:"enabled,omitempty"`
 	Path    string `yaml:"path,omitempty"`
 	Seconds int    `yaml:"seconds"`
+	Header map[string]string `yaml:"header,omitempty"`
 }
 
 // CheckTargetAddress checks if target address is valid.

@@ -1,0 +1,87 @@
+scrape_configs:
+- job_name: 'tidb'
+  scrape_interval: 10s
+  scrape_timeout: 10s
+  profiling_config:
+    pprof_config:
+      profile:
+        enabled: true
+        seconds: 5
+  static_configs:
+  - targets: ['172.16.5.40:10189']
+
+- job_name: 'pd'
+  scrape_interval: 10s
+  scrape_timeout: 10s
+  profiling_config:
+    pprof_config:
+      profile:
+        enabled: true
+        seconds: 5
+        path: '/pd/api/v1/debug/pprof/profile'
+      allocs:
+        path: '/pd/api/v1/debug/pprof/allocs'
+      block:
+        path: '/pd/api/v1/debug/pprof/block'
+      goroutine:
+        path: '/pd/api/v1/debug/pprof/goroutine'
+      heap: 
+        path: '/pd/api/v1/debug/pprof/heap'
+      mutex:
+        path: '/pd/api/v1/debug/pprof/mutex'
+      threadcreate:
+        enabled: false
+  static_configs:
+  - targets: ['172.16.5.40:24379']
+
+- job_name: 'tikv'
+  scrape_interval: 10s
+  scrape_timeout: 10s
+  profiling_config:
+    pprof_config:
+      profile:
+        enabled: true
+        seconds: 5
+        path: '/debug/pprof/profile'
+        header:
+          Content-Type: 'application/protobuf'
+      allocs:
+        enabled: false
+      block:
+        enabled: false
+      goroutine:
+        enabled: false
+      heap: 
+        enabled: false
+      mutex:
+        enabled: false
+      threadcreate:
+        enabled: false
+  static_configs:
+  - targets: ['172.16.5.31:24180', '172.16.5.36:24180']
+
+- job_name: 'tiflash'
+  scrape_interval: 10s
+  scrape_timeout: 10s
+  profiling_config:
+    pprof_config:
+      profile:
+        enabled: true
+        seconds: 5
+        path: '/debug/pprof/profile'
+        header:
+          Content-Type: 'application/protobuf'
+      allocs:
+        enabled: false
+      block:
+        enabled: false
+      goroutine:
+        enabled: false
+      heap: 
+        enabled: false
+      mutex:
+        enabled: false
+      threadcreate:
+        enabled: false
+  static_configs:
+  - targets: ['172.16.5.40:20292', '172.16.5.36:20292']

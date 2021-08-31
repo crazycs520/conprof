@@ -366,6 +366,11 @@ func (s *targetScraper) scrape(ctx context.Context, w io.Writer, profileType str
 			return err
 		}
 		req.Header.Set("User-Agent", userAgentHeader)
+		if header := s.Header();len(header) > 0 {
+			for k,v := range header {
+				req.Header.Set(k,v)
+			}
+		}
 
 		s.req = req
 	}

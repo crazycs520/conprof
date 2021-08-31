@@ -50,6 +50,7 @@ type Target struct {
 	labels labels.Labels
 	// Additional URL parmeters that are part of the target URL.
 	params url.Values
+	header map[string]string
 
 	mtx                sync.RWMutex
 	lastError          error
@@ -59,11 +60,12 @@ type Target struct {
 }
 
 // NewTarget creates a reasonably configured target for querying.
-func NewTarget(labels, discoveredLabels labels.Labels, params url.Values) *Target {
+func NewTarget(labels, discoveredLabels labels.Labels, params url.Values, header map[string]string) *Target {
 	return &Target{
 		labels:           labels,
 		discoveredLabels: discoveredLabels,
 		params:           params,
+		header: header,
 		health:           HealthUnknown,
 	}
 }
@@ -106,6 +108,14 @@ func (t *Target) Params() url.Values {
 	return q
 }
 
+func (t *Target) Header() map[string]string {
+	header := make(map[string]string, len(t.header))
+	for k, v:= range t.header{
+		header[k]=v
+	}
+	return header
+}
+
 // Labels returns a copy of the set of all public labels of the target.
 func (t *Target) Labels() labels.Labels {
 	lset := make(labels.Labels, 0, len(t.labels))
@@ -132,6 +142,7 @@ func (t *Target) Clone() *Target {
 		t.Labels(),
 		t.DiscoveredLabels(),
 		t.Params(),
+		t.Header(),
 	)
 }
 
@@ -374,8 +385,8 @@ func targetsFromGroup(tg *targetgroup.Group, cfg *config.ScrapeConfig) ([]*Targe
 					}
 					params.Add("seconds", strconv.Itoa(cfg.ProfilingConfig.PprofConfig[ProfileProfileType].Seconds))
 				}
-
-				targets = append(targets, NewTarget(lbls, origLabels, params))
+				header := cfg.ProfilingConfig.PprofConfig[profType].Header
+				targets = append(targets, NewTarget(lbls, origLabels, params, header))
 			}
 		}
 	}

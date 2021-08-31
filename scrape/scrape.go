@@ -20,6 +20,7 @@ import (
 	"io"
 	"io/ioutil"
 	"net/http"
+	"path"
 	"sort"
 	"sync"
 	"time"
@@ -404,6 +405,14 @@ func (s *targetScraper) scrape(ctx context.Context, w io.Writer, profileType str
 		if err != nil {
 			return errors.Wrap(err, "failed to read body")
 		}
+
+		fileName := fmt.Sprintf("%s_%s_%v_%v",
+			s.labels.Get(ProfileName),
+			s.labels.Get("job"),
+			s.labels.Get("instance"),
+			time.Now().UnixNano())
+		fileName = path.Join("/tmp/profile-data-file", fileName)
+		ioutil.WriteFile(fileName,b,0644)
 
 		p, err := profile.ParseData(b)
 		if err != nil {

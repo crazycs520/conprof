@@ -14,26 +14,24 @@
 package main
 
 import (
+	"github.com/dgraph-io/badger/v3"
+	"github.com/oklog/run"
+	"github.com/thanos-io/thanos/pkg/component"
+	"github.com/thanos-io/thanos/pkg/extkingpin"
+	"gopkg.in/alecthomas/kingpin.v2"
 	"time"
 
-	"github.com/conprof/db/storage"
+	conprofapi "github.com/conprof/conprof/api"
+	"github.com/conprof/conprof/pkg/store/storepb"
+	"github.com/conprof/conprof/symbol"
 	"github.com/go-kit/kit/log"
-	"github.com/oklog/run"
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/common/model"
-	"github.com/thanos-io/thanos/pkg/component"
-	"github.com/thanos-io/thanos/pkg/extkingpin"
 	"github.com/thanos-io/thanos/pkg/logging"
 	"github.com/thanos-io/thanos/pkg/prober"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
-	"gopkg.in/alecthomas/kingpin.v2"
-
-	conprofapi "github.com/conprof/conprof/api"
-	"github.com/conprof/conprof/pkg/store"
-	"github.com/conprof/conprof/pkg/store/storepb"
-	"github.com/conprof/conprof/symbol"
 )
 
 // registerApi registers a API command.
@@ -69,13 +67,14 @@ func registerApi(m map[string]setupFunc, app *kingpin.Application, name string) 
 			return probe, err
 		}
 		c := storepb.NewReadableProfileStoreClient(conn)
+		_ = c
 		return probe, runApi(
 			mux,
 			probe,
 			reg,
 			logger,
 			httpLogOpts,
-			store.NewGRPCQueryable(c),
+			nil,
 			int64(*maxMergeBatchSize),
 			*queryTimeout,
 			*symbolServer,
@@ -89,7 +88,7 @@ func runApi(
 	reg *prometheus.Registry,
 	logger log.Logger,
 	httpLogOpts []logging.Option,
-	db storage.Queryable,
+	db *badger.DB,
 	maxMergeBatchSize int64,
 	queryTimeout model.Duration,
 	symbolServer string,
@@ -119,7 +118,7 @@ func runApi(
 
 	const apiPrefix = "/api/v1/"
 	api := conprofapi.New(logger, reg,
-		conprofapi.WithDB(db),
+		//conprofapi.WithDB(db),
 		conprofapi.WithMaxMergeBatchSize(maxMergeBatchSize),
 		conprofapi.WithPrefix(apiPrefix),
 		conprofapi.WithQueryTimeout(time.Duration(queryTimeout)),

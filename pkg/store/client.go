@@ -52,30 +52,30 @@ type grpcStoreQuerier struct {
 }
 
 func (q *grpcStoreQuerier) Select(sortSeries bool, hints *storage.SelectHints, matchers ...*labels.Matcher) storage.SeriesSet {
-	ss := &grpcSeriesSet{}
+	return &grpcSeriesSet{}
 
-	m, err := translatePromMatchers(matchers)
-	if err != nil {
-		ss.err = fmt.Errorf("translate prom matchers: %w", err)
-		return ss
-	}
-
-	stream, err := q.c.Series(q.ctx, &storepb.SeriesRequest{
-		MinTime:     q.mint,
-		MaxTime:     q.maxt,
-		Matchers:    m,
-		SelectHints: storepb.PbSelectHints(hints),
-	})
-	if err != nil {
-		ss.err = fmt.Errorf("series: %w", err)
-		return ss
-	}
-
-	ss.set = storepb.MergeSeriesSets(&grpcChunkSeriesSet{
-		stream: stream,
-	})
-
-	return ss
+	//m, err := translatePromMatchers(matchers)
+	//if err != nil {
+	//	ss.err = fmt.Errorf("translate prom matchers: %w", err)
+	//	return ss
+	//}
+	//
+	//stream, err := q.c.Series(q.ctx, &storepb.SeriesRequest{
+	//	MinTime:     q.mint,
+	//	MaxTime:     q.maxt,
+	//	Matchers:    m,
+	//	SelectHints: storepb.PbSelectHints(hints),
+	//})
+	//if err != nil {
+	//	ss.err = fmt.Errorf("series: %w", err)
+	//	return ss
+	//}
+	//
+	//ss.set = storepb.MergeSeriesSets(&grpcChunkSeriesSet{
+	//	stream: stream,
+	//})
+	//
+	//return ss
 }
 
 type grpcSeriesSet struct {

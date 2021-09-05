@@ -15,10 +15,9 @@ package main
 
 import (
 	"context"
-	"net/http"
+	"github.com/dgraph-io/badger/v3"
 	"time"
 
-	"github.com/conprof/db/storage"
 	"github.com/go-kit/kit/log"
 	"github.com/julienschmidt/httprouter"
 	"github.com/oklog/run"
@@ -32,19 +31,18 @@ import (
 	"gopkg.in/alecthomas/kingpin.v2"
 
 	conprofapi "github.com/conprof/conprof/api"
-	"github.com/conprof/conprof/pkg/store"
+	//"github.com/conprof/conprof/pkg/store"
 	"github.com/conprof/conprof/pkg/store/storepb"
 	"github.com/conprof/conprof/pprofui"
 	"github.com/conprof/conprof/symbol"
-	"github.com/conprof/conprof/web"
 )
 
 // registerWeb registers a web command.
 func registerWeb(m map[string]setupFunc, app *kingpin.Application, name string, reloadCh chan struct{}, reloaders *configReloaders) {
 	cmd := app.Command(name, "Run a web interface to view profiles from a storage.")
 
-	storeAddress := cmd.Flag("store", "Address of statically configured store.").
-		Default("127.0.0.1:10901").String()
+	//storeAddress := cmd.Flag("store", "Address of statically configured store.").
+	//	Default("127.0.0.1:10901").String()
 	symbolServer := cmd.Flag("symbol-server", "Symbol server to request to symbolize native stacktraces.").String()
 	maxMergeBatchSize := cmd.Flag("max-merge-batch-size", "Bytes loaded in one batch for merging. This is to limit the amount of memory a merge query can use.").
 		Default("64MB").Bytes()
@@ -52,11 +50,11 @@ func registerWeb(m map[string]setupFunc, app *kingpin.Application, name string, 
 		Default("10s"))
 
 	m[name] = func(comp component.Component, g *run.Group, mux httpMux, probe prober.Probe, logger log.Logger, reg *prometheus.Registry, debugLogging bool) (prober.Probe, error) {
-		conn, err := grpc.Dial(*storeAddress, grpc.WithInsecure())
-		if err != nil {
-			return probe, err
-		}
-		c := storepb.NewReadableProfileStoreClient(conn)
+		//conn, err := grpc.Dial(*storeAddress, grpc.WithInsecure())
+		//if err != nil {
+		//	return probe, err
+		//}
+		//c := storepb.NewReadableProfileStoreClient(conn)
 
 		var s *symbol.Symbolizer = nil
 		if *symbolServer != "" {
@@ -70,14 +68,15 @@ func registerWeb(m map[string]setupFunc, app *kingpin.Application, name string, 
 
 		w := NewWeb(
 			mux,
-			store.NewGRPCQueryable(c),
+			//store.NewGRPCQueryable(c),
+			nil,
 			int64(*maxMergeBatchSize),
 			*queryTimeout,
 			WebLogger(logger),
 			WebRegistry(reg),
 			WebSymbolizer(s),
 		)
-		err = w.Run(context.Background(), reloadCh)
+		err := w.Run(context.Background(), reloadCh)
 		if err != nil {
 			return probe, err
 		}
@@ -92,7 +91,7 @@ type Web struct {
 	mux               httpMux
 	logger            log.Logger
 	registry          *prometheus.Registry
-	db                storage.Queryable
+	db                *badger.DB
 	reloaders         *configReloaders
 	maxMergeBatchSize int64
 	queryTimeout      model.Duration
@@ -103,7 +102,7 @@ type Web struct {
 
 func NewWeb(
 	mux httpMux,
-	db storage.Queryable,
+	db *badger.DB,
 	maxMergeBatchSize int64,
 	queryTimeout model.Duration,
 	opts ...WebOption,
@@ -192,7 +191,7 @@ func (w *Web) Run(_ context.Context, reloadCh chan struct{}) error {
 
 	router.GET("/-/reload", api.Reload)
 	router.GET("/pprof/*remainder", ui.PprofView)
-	router.NotFound = http.FileServer(web.Assets)
+	//router.NotFound = http.FileServer(web.Assets)
 
 	w.mux.Handle("/", router)
 

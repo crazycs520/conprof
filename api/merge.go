@@ -15,6 +15,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -23,7 +24,6 @@ import (
 	"github.com/conprof/db/tsdb/chunkenc"
 	"github.com/google/pprof/profile"
 	"github.com/prometheus/prometheus/pkg/labels"
-	"github.com/prometheus/prometheus/pkg/timestamp"
 )
 
 var (
@@ -114,23 +114,26 @@ func (i *batchIterator) Err() error {
 }
 
 func (a *API) mergeProfiles(ctx context.Context, from, to time.Time, sel []*labels.Matcher) (*profile.Profile, storage.Warnings, *ApiError) {
-	q, err := a.db.Querier(ctx, timestamp.FromTime(from), timestamp.FromTime(to))
-	if err != nil {
-		return nil, nil, &ApiError{Typ: ErrorExec, Err: err}
-	}
+	return nil, nil, &ApiError{Typ: ErrorBadData, Err: errors.New("no implemented")}
+	/*
+		q, err := a.db.Querier(ctx, timestamp.FromTime(from), timestamp.FromTime(to))
+		if err != nil {
+			return nil, nil, &ApiError{Typ: ErrorExec, Err: err}
+		}
 
-	set := q.Select(false, nil, sel...)
-	mergedProfile, count, err := mergeSeriesSet(ctx, set, a.maxMergeBatchSize)
-	if err != nil && err != context.DeadlineExceeded {
-		return nil, nil, &ApiError{Typ: ErrorInternal, Err: err}
-	}
-	var warnings storage.Warnings = nil
-	if err != nil && err == context.DeadlineExceeded {
-		warnings = append(warnings, NewMergeTimeoutError(count))
-	}
-	a.mergeSizeHist.Observe(float64(count))
+		set := q.Select(false, nil, sel...)
+		mergedProfile, count, err := mergeSeriesSet(ctx, set, a.maxMergeBatchSize)
+		if err != nil && err != context.DeadlineExceeded {
+			return nil, nil, &ApiError{Typ: ErrorInternal, Err: err}
+		}
+		var warnings storage.Warnings = nil
+		if err != nil && err == context.DeadlineExceeded {
+			warnings = append(warnings, NewMergeTimeoutError(count))
+		}
+		a.mergeSizeHist.Observe(float64(count))
 
-	return mergedProfile, warnings, nil
+		return mergedProfile, warnings, nil
+	*/
 }
 
 func mergeSeriesSet(ctx context.Context, set storage.SeriesSet, maxMergeBatchSize int64) (*profile.Profile, int, error) {

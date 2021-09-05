@@ -34,8 +34,6 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 	"gopkg.in/alecthomas/kingpin.v2"
-
-	"github.com/conprof/conprof/pkg/store"
 )
 
 type componentString string
@@ -117,12 +115,12 @@ func runStorage(
 		grpcProbe,
 		prober.NewInstrumentation(comp, logger, extprom.WrapRegistererWithPrefix("conprof_", reg)),
 	)
-	maxBytesPerFrame := 1024 * 1024 * 2 // 2 Mb default, might need to be tuned later on.
-	s := store.NewProfileStore(logger, db, maxBytesPerFrame)
+	//maxBytesPerFrame := 1024 * 1024 * 2 // 2 Mb default, might need to be tuned later on.
+	//s := store.NewProfileStore(logger, db, maxBytesPerFrame)
 
 	srv := grpcserver.New(logger, reg, &opentracing.NoopTracer{}, grpcLogOpts, tagOpts, comp, grpcProbe,
-		grpcserver.WithServer(store.RegisterReadableStoreServer(s)),
-		grpcserver.WithServer(store.RegisterWritableStoreServer(s)),
+		//grpcserver.WithServer(store.RegisterReadableStoreServer(s)),
+		//grpcserver.WithServer(store.RegisterWritableStoreServer(s)),
 		grpcserver.WithListen(grpcBindAddr),
 		grpcserver.WithGracePeriod(grpcGracePeriod),
 		grpcserver.WithGRPCServerOption(

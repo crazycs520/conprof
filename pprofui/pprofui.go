@@ -16,9 +16,9 @@ package pprofui
 
 import (
 	"bytes"
-	"context"
 	"encoding/base64"
 	"fmt"
+	"github.com/dgraph-io/badger/v3"
 	"net/http"
 	"path"
 	"strconv"
@@ -36,17 +36,16 @@ import (
 	"github.com/spf13/pflag"
 
 	"github.com/conprof/conprof/symbol"
-	"github.com/conprof/db/storage"
 )
 
 type pprofUI struct {
 	logger     log.Logger
-	db         storage.Queryable
+	db         *badger.DB
 	symbolizer *symbol.Symbolizer
 }
 
 // NewServer creates a new Server backed by the supplied Storage.
-func New(logger log.Logger, db storage.Queryable, symbolizer *symbol.Symbolizer) *pprofUI {
+func New(logger log.Logger, db *badger.DB, symbolizer *symbol.Symbolizer) *pprofUI {
 	s := &pprofUI{
 		logger:     logger,
 		db:         db,
@@ -65,26 +64,27 @@ func parsePath(reqPath string) (series string, timestamp string, remainingPath s
 }
 
 func (p *pprofUI) selectProfile(m labels.Selector, timestamp int64) ([]byte, error) {
-	q, err := p.db.Querier(context.TODO(), timestamp, timestamp)
-	if err != nil {
-		level.Error(p.logger).Log("err", err)
-		return nil, err
-	}
-
-	ss := q.Select(false, nil, m...)
-	ok := ss.Next()
-	if !ok {
-		return nil, errors.New("could not get series set")
-	}
-	s := ss.At()
-	i := s.Iterator()
-	ok = i.Seek(timestamp)
-	if !ok {
-		return nil, errors.New("could not get series set")
-	}
-	_, buf := i.At()
-
-	return buf, nil
+	return nil, errors.New("no implemented")
+	//q, err := p.db.Querier(context.TODO(), timestamp, timestamp)
+	//if err != nil {
+	//	level.Error(p.logger).Log("err", err)
+	//	return nil, err
+	//}
+	//
+	//ss := q.Select(false, nil, m...)
+	//ok := ss.Next()
+	//if !ok {
+	//	return nil, errors.New("could not get series set")
+	//}
+	//s := ss.At()
+	//i := s.Iterator()
+	//ok = i.Seek(timestamp)
+	//if !ok {
+	//	return nil, errors.New("could not get series set")
+	//}
+	//_, buf := i.At()
+	//
+	//return buf, nil
 }
 
 func (p *pprofUI) PprofView(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {

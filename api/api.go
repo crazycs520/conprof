@@ -14,8 +14,11 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"github.com/conprof/conprof/codec"
+	"github.com/dgraph-io/badger/v3"
 	"math"
 	"net"
 	"net/http"
@@ -35,8 +38,6 @@ import (
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
-	"github.com/prometheus/common/model"
-	"github.com/prometheus/common/route"
 	"github.com/prometheus/prometheus/pkg/labels"
 	"github.com/prometheus/prometheus/pkg/timestamp"
 	"github.com/prometheus/prometheus/promql/parser"
@@ -78,7 +79,7 @@ type Symbolizer interface {
 type API struct {
 	logger            log.Logger
 	registry          *prometheus.Registry
-	db                storage.Queryable
+	db                *badger.DB
 	reloadCh          chan struct{}
 	maxMergeBatchSize int64
 	targets           func(context.Context) TargetRetriever
@@ -132,7 +133,7 @@ func New(
 	return a
 }
 
-func WithDB(db storage.Queryable) Option {
+func WithDB(db *badger.DB) Option {
 	return func(a *API) {
 		a.db = db
 	}
@@ -213,9 +214,72 @@ type Series struct {
 	Timestamps []int64           `json:"timestamps"`
 }
 
-func (a *API) QueryRange(r *http.Request) (interface{}, []error, *ApiError) {
-	ctx := r.Context()
+type QueryCondition struct {
+	field string
+	value string
+}
 
+func (c *QueryCondition) Match(key *codec.ProfileKey) bool {
+	if key == nil {
+		return false
+	}
+	switch c.field {
+	case "job":
+		return key.Job == c.value
+	case "tp":
+		return key.Tp == c.value
+	case "instance":
+		return key.Instance == c.value
+	}
+	return false
+}
+
+func parseQueryCondition(query string) ([]QueryCondition, error) {
+	result := make([]QueryCondition, 0, 2)
+	conds := strings.Split(query, ",")
+	for _, cond := range conds {
+		exprs := strings.Split(cond, "=")
+		if len(exprs) != 2 {
+			return nil, fmt.Errorf("invalid query %v, condition %v", query, cond)
+		}
+		result = append(result, QueryCondition{
+			field: strings.TrimSpace(exprs[0]),
+			value: strings.TrimSpace(exprs[1]),
+		})
+	}
+	return result, nil
+}
+
+func buildQueryRange(from, to int64, conds []QueryCondition) (start, end *codec.ProfileKey) {
+	buildKey := func(k *codec.ProfileKey) {
+		for _, c := range conds {
+			switch c.field {
+			case "job":
+				k.Job = c.value
+			case "tp":
+				k.Tp = c.value
+			case "instance":
+				k.Instance = c.value
+			}
+		}
+	}
+
+	startKey := &codec.ProfileKey{Ts: from}
+	endKey := &codec.ProfileKey{Ts: to}
+	buildKey(startKey)
+	buildKey(endKey)
+	return startKey, endKey
+}
+
+func buildLabelsFromProfileKey(key *codec.ProfileKey) map[string]string {
+	labels := make(map[string]string, 4)
+	labels["job"] = key.Job
+	labels["__name__"] = key.Tp
+	labels["instance"] = key.Instance
+	return labels
+}
+
+func (a *API) QueryRange(r *http.Request) (interface{}, []error, *ApiError) {
 	from, err := parseTime(r.URL.Query().Get("from"))
 	if err != nil {
 		return nil, nil, &ApiError{Typ: ErrorBadData, Err: fmt.Errorf("failed to parse \"from\" time: %w", err)}
@@ -247,91 +311,157 @@ func (a *API) QueryRange(r *http.Request) (interface{}, []error, *ApiError) {
 		return nil, nil, &ApiError{Typ: ErrorBadData, Err: errors.New("query cannot be empty")}
 	}
 
-	q, err := a.db.Querier(ctx, timestamp.FromTime(from), timestamp.FromTime(to))
+	conds, err := parseQueryCondition(queryString)
 	if err != nil {
-		return nil, nil, &ApiError{Typ: ErrorExec, Err: err}
+		return nil, nil, &ApiError{Typ: ErrorBadData, Err: fmt.Errorf("failed to parse \"query\": %w", err)}
 	}
 
-	level.Debug(a.logger).Log("query", queryString, "from", from, "to", to)
-	sel, err := parser.ParseMetricSelector(queryString)
-	if err != nil {
-		return nil, nil, &ApiError{Typ: ErrorBadData, Err: err}
-	}
+	startKey, endKey := buildQueryRange(timestamp.FromTime(from), timestamp.FromTime(to), conds)
 
-	// Record query window
-	a.queryRangeHist.Observe(to.Sub(from).Seconds())
-
-	set := q.Select(true, &storage.SelectHints{
-		Start: timestamp.FromTime(from),
-		End:   timestamp.FromTime(to),
-		Func:  "timestamps",
-	}, sel...)
 	res := []Series{}
-	j := 0
-	limitReached := false
-	for set.Next() {
-		series := set.At()
-		ls := series.Labels()
+	a.db.View(func(txn *badger.Txn) error {
+		it := txn.NewIterator(badger.DefaultIteratorOptions)
+		defer it.Close()
+		prefix := startKey.EncodeForRangeQuery()
+		end := endKey.EncodeForRangeQuery()
+		resSeries := Series{}
+		var lastKey *codec.ProfileKey
+		cnt := 0
+		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
+			item := it.Item()
+			k := item.Key()
+			if bytes.Compare(k, end) >= 0 {
+				break
+			}
 
-		resSeries := Series{Labels: ls.Map()}
-		i := series.Iterator()
-		for i.Next() {
-			t, _ := i.At()
-			resSeries.Timestamps = append(resSeries.Timestamps, t)
+			key, err := codec.DecodeProfileKey(k)
+			if err != nil {
+				continue
+			}
+
+			match := true
+			for _, cond := range conds {
+				match = match && cond.Match(key)
+			}
+			if !match {
+				continue
+			}
+
+			cnt++
+			if cnt > limit {
+				break
+			}
+
+			if len(resSeries.Timestamps) == 0 {
+				resSeries.Labels = buildLabelsFromProfileKey(key)
+				resSeries.Timestamps = append(resSeries.Timestamps, key.Ts)
+				lastKey = key
+				continue
+			}
+			if lastKey != nil && lastKey.Job == key.Job &&
+				lastKey.Tp == key.Tp &&
+				lastKey.Instance == key.Instance {
+				resSeries.Timestamps = append(resSeries.Timestamps, key.Ts)
+			} else {
+				if len(resSeries.Timestamps) > 0 {
+					res = append(res, resSeries)
+				}
+				resSeries = Series{}
+			}
+			lastKey = key
 		}
-
-		if err := i.Err(); err != nil {
-			level.Error(a.logger).Log("err", err, "series", ls.String())
-		}
-
-		res = append(res, resSeries)
-		j++
-		if applyLimit && j == limit {
-			limitReached = true
-			break
-		}
-	}
-	if err := set.Err(); err != nil {
-		return nil, nil, &ApiError{Typ: ErrorInternal, Err: set.Err()}
-	}
-
-	warn := set.Warnings()
-	if limitReached {
-		warn = append(warn, fmt.Errorf("retrieved %d series, more available", j))
-	}
-
-	return res, warn, nil
+		return nil
+	})
+	//_ = limit
+	//_ = ctx
+	//return nil, nil, &ApiError{Typ: ErrorBadData, Err: fmt.Errorf("no implements")}
+	//q, err := a.db.Querier(ctx, timestamp.FromTime(from), timestamp.FromTime(to))
+	//if err != nil {
+	//	return nil, nil, &ApiError{Typ: ErrorExec, Err: err}
+	//}
+	//
+	//level.Debug(a.logger).Log("query", queryString, "from", from, "to", to)
+	//sel, err := parser.ParseMetricSelector(queryString)
+	//if err != nil {
+	//	return nil, nil, &ApiError{Typ: ErrorBadData, Err: err}
+	//}
+	//
+	//// Record query window
+	//a.queryRangeHist.Observe(to.Sub(from).Seconds())
+	//
+	//set := q.Select(true, &storage.SelectHints{
+	//	Start: timestamp.FromTime(from),
+	//	End:   timestamp.FromTime(to),
+	//	Func:  "timestamps",
+	//}, sel...)
+	//j := 0
+	//limitReached := false
+	//for set.Next() {
+	//	series := set.At()
+	//	ls := series.Labels()
+	//
+	//	resSeries := Series{Labels: ls.Map()}
+	//	i := series.Iterator()
+	//	for i.Next() {
+	//		t, _ := i.At()
+	//		resSeries.Timestamps = append(resSeries.Timestamps, t)
+	//	}
+	//
+	//	if err := i.Err(); err != nil {
+	//		level.Error(a.logger).Log("err", err, "series", ls.String())
+	//	}
+	//
+	//	res = append(res, resSeries)
+	//	j++
+	//	if applyLimit && j == limit {
+	//		limitReached = true
+	//		break
+	//	}
+	//}
+	//if err := set.Err(); err != nil {
+	//	return nil, nil, &ApiError{Typ: ErrorInternal, Err: set.Err()}
+	//}
+	//
+	//warn := set.Warnings()
+	//if limitReached {
+	//	warn = append(warn, fmt.Errorf("retrieved %d series, more available", j))
+	//}
+	//
+	return res, nil, nil
 }
 
 func (a *API) findProfile(ctx context.Context, t time.Time, sel []*labels.Matcher) (*profile.Profile, error) {
 	// Timestamps don't have to match exactly and staleness kicks in within 5
 	// minutes of no samples, so we need to search the range of -5min to +5min
 	// for possible samples.
-	q, err := a.db.Querier(ctx, timestamp.FromTime(t.Add(-time.Minute*5)), timestamp.FromTime(t.Add(time.Minute*5)))
-	if err != nil {
-		return nil, err
-	}
-
-	requestedTime := timestamp.FromTime(t)
-
-	set := q.Select(false, nil, sel...)
-	for set.Next() {
-		series := set.At()
-		i := series.Iterator()
-		for i.Next() {
-			ts, b := i.At()
-			if ts >= requestedTime {
-				// First profile whose timestamp is larger than or equal to the timestamp being searched for.
-				return profile.ParseData(b)
-			}
-		}
-		err = i.Err()
+	return nil, fmt.Errorf("no implement")
+	/*
+		q, err := a.db.Querier(ctx, timestamp.FromTime(t.Add(-time.Minute*5)), timestamp.FromTime(t.Add(time.Minute*5)))
 		if err != nil {
 			return nil, err
 		}
-	}
 
-	return nil, set.Err()
+		requestedTime := timestamp.FromTime(t)
+
+		set := q.Select(false, nil, sel...)
+		for set.Next() {
+			series := set.At()
+			i := series.Iterator()
+			for i.Next() {
+				ts, b := i.At()
+				if ts >= requestedTime {
+					// First profile whose timestamp is larger than or equal to the timestamp being searched for.
+					return profile.ParseData(b)
+				}
+			}
+			err = i.Err()
+			if err != nil {
+				return nil, err
+			}
+		}
+
+		return nil, set.Err()
+	*/
 }
 
 func (a *API) SingleProfileQuery(r *http.Request) (*profile.Profile, storage.Warnings, *ApiError) {
@@ -562,166 +692,176 @@ func parseTime(s string) (time.Time, error) {
 }
 
 func (a *API) Series(r *http.Request) (interface{}, []error, *ApiError) {
-	ctx := r.Context()
+	return nil, nil, &ApiError{Typ: ErrorBadData, Err: errors.New("no implemented")}
+	/*
+		ctx := r.Context()
 
-	if err := r.ParseForm(); err != nil {
-		return nil, nil, &ApiError{Typ: ErrorInternal, Err: errors.Wrap(err, "parse form")}
-	}
+		if err := r.ParseForm(); err != nil {
+			return nil, nil, &ApiError{Typ: ErrorInternal, Err: errors.Wrap(err, "parse form")}
+		}
 
-	if len(r.Form["match[]"]) == 0 {
-		return nil, nil, &ApiError{Typ: ErrorBadData, Err: errors.New("no match[] parameter provided")}
-	}
+		if len(r.Form["match[]"]) == 0 {
+			return nil, nil, &ApiError{Typ: ErrorBadData, Err: errors.New("no match[] parameter provided")}
+		}
 
-	start, end, err := parseMetadataTimeRange(r, defaultMetadataTimeRange)
-	if err != nil {
-		return nil, nil, &ApiError{Typ: ErrorBadData, Err: err}
-	}
-
-	var matcherSets [][]*labels.Matcher
-	for _, s := range r.Form["match[]"] {
-		matchers, err := parser.ParseMetricSelector(s)
+		start, end, err := parseMetadataTimeRange(r, defaultMetadataTimeRange)
 		if err != nil {
 			return nil, nil, &ApiError{Typ: ErrorBadData, Err: err}
 		}
-		matcherSets = append(matcherSets, matchers)
-	}
 
-	q, err := a.db.Querier(ctx, timestamp.FromTime(start), timestamp.FromTime(end))
-	if err != nil {
-		return nil, nil, &ApiError{Typ: ErrorExec, Err: err}
-	}
+		var matcherSets [][]*labels.Matcher
+		for _, s := range r.Form["match[]"] {
+			matchers, err := parser.ParseMetricSelector(s)
+			if err != nil {
+				return nil, nil, &ApiError{Typ: ErrorBadData, Err: err}
+			}
+			matcherSets = append(matcherSets, matchers)
+		}
 
-	var (
-		metrics = []labels.Labels{}
-		sets    []storage.SeriesSet
-	)
-	for _, mset := range matcherSets {
-		sets = append(sets, q.Select(false, &storage.SelectHints{
-			Start: timestamp.FromTime(start),
-			End:   timestamp.FromTime(end),
-			Func:  "series",
-		}, mset...))
-	}
+		q, err := a.db.Querier(ctx, timestamp.FromTime(start), timestamp.FromTime(end))
+		if err != nil {
+			return nil, nil, &ApiError{Typ: ErrorExec, Err: err}
+		}
 
-	set := storage.NewMergeSeriesSet(sets, storage.ChainedSeriesMerge)
-	for set.Next() {
-		metrics = append(metrics, set.At().Labels())
-	}
-	if set.Err() != nil {
-		return nil, nil, &ApiError{Typ: ErrorInternal, Err: err}
-	}
+		var (
+			metrics = []labels.Labels{}
+			sets    []storage.SeriesSet
+		)
+		for _, mset := range matcherSets {
+			sets = append(sets, q.Select(false, &storage.SelectHints{
+				Start: timestamp.FromTime(start),
+				End:   timestamp.FromTime(end),
+				Func:  "series",
+			}, mset...))
+		}
 
-	return metrics, nil, nil
+		set := storage.NewMergeSeriesSet(sets, storage.ChainedSeriesMerge)
+		for set.Next() {
+			metrics = append(metrics, set.At().Labels())
+		}
+		if set.Err() != nil {
+			return nil, nil, &ApiError{Typ: ErrorInternal, Err: err}
+		}
+
+		return metrics, nil, nil
+	*/
 }
 
 func (a *API) LabelNames(r *http.Request) (interface{}, []error, *ApiError) {
-	ctx := r.Context()
+	return nil, nil, &ApiError{Typ: ErrorBadData, Err: errors.New("no implemented")}
+	/*
+		ctx := r.Context()
 
-	start, end, err := parseMetadataTimeRange(r, defaultMetadataTimeRange)
-	if err != nil {
-		return nil, nil, &ApiError{Typ: ErrorBadData, Err: err}
-	}
-
-	matcherSets := [][]*labels.Matcher{}
-	for _, s := range r.Form["match[]"] {
-		matchers, err := parser.ParseMetricSelector(s)
-		if err != nil {
-			return nil, nil, &ApiError{
-				Typ: ErrorBadData,
-				Err: err,
-			}
-		}
-		matcherSets = append(matcherSets, matchers)
-	}
-
-	q, err := a.db.Querier(ctx, timestamp.FromTime(start), timestamp.FromTime(end))
-	if err != nil {
-		return nil, nil, &ApiError{Typ: ErrorExec, Err: err}
-	}
-
-	hints := &storage.SelectHints{
-		Start: timestamp.FromTime(start),
-		End:   timestamp.FromTime(end),
-		Func:  "series", // There is no series function, this token is used for lookups that don't need samples.
-	}
-
-	var names []string
-	var warnings storage.Warnings
-	if len(r.Form["match[]"]) > 0 {
-		// Get all series which match matchers.
-		var sets []storage.SeriesSet
-		for _, mset := range matcherSets {
-			s := q.Select(false, hints, mset...)
-			sets = append(sets, s)
-		}
-		names, warnings, err = labelNamesByMatchers(sets)
-		if err != nil {
-			return nil, nil, &ApiError{Typ: ErrorExec, Err: err}
-		}
-	} else {
-		names, warnings, err = q.LabelNames()
-		if err != nil {
-			return nil, nil, &ApiError{Typ: ErrorExec, Err: err}
-		}
-	}
-
-	return names, warnings, nil
-}
-
-func (a *API) LabelValues(r *http.Request) (interface{}, []error, *ApiError) {
-	ctx := r.Context()
-	name := route.Param(ctx, "name")
-
-	if !model.LabelNameRE.MatchString(name) {
-		return nil, nil, &ApiError{Typ: ErrorBadData, Err: errors.Errorf("invalid label name: %q", name)}
-	}
-
-	start, end, err := parseMetadataTimeRange(r, defaultMetadataTimeRange)
-	if err != nil {
-		return nil, nil, &ApiError{Typ: ErrorBadData, Err: err}
-	}
-
-	var matcherSets [][]*labels.Matcher
-	for _, s := range r.Form["match[]"] {
-		matchers, err := parser.ParseMetricSelector(s)
+		start, end, err := parseMetadataTimeRange(r, defaultMetadataTimeRange)
 		if err != nil {
 			return nil, nil, &ApiError{Typ: ErrorBadData, Err: err}
 		}
-		matcherSets = append(matcherSets, matchers)
-	}
 
-	q, err := a.db.Querier(ctx, timestamp.FromTime(start), timestamp.FromTime(end))
-	if err != nil {
-		return nil, nil, &ApiError{Typ: ErrorExec, Err: err}
-	}
-
-	hints := &storage.SelectHints{
-		Start: timestamp.FromTime(start),
-		End:   timestamp.FromTime(end),
-		Func:  "series", // There is no series function, this token is used for lookups that don't need samples.
-	}
-
-	var vals []string
-	var warnings storage.Warnings
-	if len(r.Form["match[]"]) > 0 {
-		// Get all series which match matchers.
-		var sets []storage.SeriesSet
-		for _, mset := range matcherSets {
-			s := q.Select(false, hints, mset...)
-			sets = append(sets, s)
+		matcherSets := [][]*labels.Matcher{}
+		for _, s := range r.Form["match[]"] {
+			matchers, err := parser.ParseMetricSelector(s)
+			if err != nil {
+				return nil, nil, &ApiError{
+					Typ: ErrorBadData,
+					Err: err,
+				}
+			}
+			matcherSets = append(matcherSets, matchers)
 		}
-		vals, warnings, err = labelValuesByMatchers(sets, name)
+
+		q, err := a.db.Querier(ctx, timestamp.FromTime(start), timestamp.FromTime(end))
 		if err != nil {
 			return nil, nil, &ApiError{Typ: ErrorExec, Err: err}
 		}
-	} else {
-		vals, warnings, err = q.LabelValues(name)
+
+		hints := &storage.SelectHints{
+			Start: timestamp.FromTime(start),
+			End:   timestamp.FromTime(end),
+			Func:  "series", // There is no series function, this token is used for lookups that don't need samples.
+		}
+
+		var names []string
+		var warnings storage.Warnings
+		if len(r.Form["match[]"]) > 0 {
+			// Get all series which match matchers.
+			var sets []storage.SeriesSet
+			for _, mset := range matcherSets {
+				s := q.Select(false, hints, mset...)
+				sets = append(sets, s)
+			}
+			names, warnings, err = labelNamesByMatchers(sets)
+			if err != nil {
+				return nil, nil, &ApiError{Typ: ErrorExec, Err: err}
+			}
+		} else {
+			names, warnings, err = q.LabelNames()
+			if err != nil {
+				return nil, nil, &ApiError{Typ: ErrorExec, Err: err}
+			}
+		}
+
+		return names, warnings, nil
+	*/
+}
+
+func (a *API) LabelValues(r *http.Request) (interface{}, []error, *ApiError) {
+	return nil, nil, &ApiError{Typ: ErrorBadData, Err: errors.New("no implemented")}
+
+	/*
+		ctx := r.Context()
+		name := route.Param(ctx, "name")
+
+		if !model.LabelNameRE.MatchString(name) {
+			return nil, nil, &ApiError{Typ: ErrorBadData, Err: errors.Errorf("invalid label name: %q", name)}
+		}
+
+		start, end, err := parseMetadataTimeRange(r, defaultMetadataTimeRange)
+		if err != nil {
+			return nil, nil, &ApiError{Typ: ErrorBadData, Err: err}
+		}
+
+		var matcherSets [][]*labels.Matcher
+		for _, s := range r.Form["match[]"] {
+			matchers, err := parser.ParseMetricSelector(s)
+			if err != nil {
+				return nil, nil, &ApiError{Typ: ErrorBadData, Err: err}
+			}
+			matcherSets = append(matcherSets, matchers)
+		}
+
+		q, err := a.db.Querier(ctx, timestamp.FromTime(start), timestamp.FromTime(end))
 		if err != nil {
 			return nil, nil, &ApiError{Typ: ErrorExec, Err: err}
 		}
-	}
 
-	return vals, warnings, nil
+		hints := &storage.SelectHints{
+			Start: timestamp.FromTime(start),
+			End:   timestamp.FromTime(end),
+			Func:  "series", // There is no series function, this token is used for lookups that don't need samples.
+		}
+
+		var vals []string
+		var warnings storage.Warnings
+		if len(r.Form["match[]"]) > 0 {
+			// Get all series which match matchers.
+			var sets []storage.SeriesSet
+			for _, mset := range matcherSets {
+				s := q.Select(false, hints, mset...)
+				sets = append(sets, s)
+			}
+			vals, warnings, err = labelValuesByMatchers(sets, name)
+			if err != nil {
+				return nil, nil, &ApiError{Typ: ErrorExec, Err: err}
+			}
+		} else {
+			vals, warnings, err = q.LabelValues(name)
+			if err != nil {
+				return nil, nil, &ApiError{Typ: ErrorExec, Err: err}
+			}
+		}
+
+		return vals, warnings, nil
+	*/
 }
 
 // LabelValuesByMatchers uses matchers to filter out matching series, then label values are extracted.

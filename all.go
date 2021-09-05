@@ -15,10 +15,10 @@ package main
 
 import (
 	"context"
+	"github.com/dgraph-io/badger/v3"
+	"github.com/dgraph-io/badger/v3/options"
 	"time"
 
-	"github.com/conprof/db/tsdb"
-	"github.com/conprof/db/tsdb/wal"
 	"github.com/go-kit/kit/log"
 	"github.com/go-kit/kit/log/level"
 	grpc_logging "github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/logging"
@@ -139,21 +139,11 @@ func runAll(
 	objStoreConfig extflag.PathOrContent,
 	srv *grpcSettings,
 ) (prober.Probe, error) {
-	db, err := tsdb.Open(
-		storagePath,
-		logger,
-		prometheus.DefaultRegisterer,
-		&tsdb.Options{
-			RetentionDuration:      retention.Milliseconds(),
-			WALSegmentSize:         wal.DefaultSegmentSize,
-			MinBlockDuration:       tsdb.DefaultBlockDuration,
-			MaxBlockDuration:       retention.Milliseconds() / 10,
-			NoLockfile:             true,
-			AllowOverlappingBlocks: false,
-			WALCompression:         true,
-			StripeSize:             tsdb.DefaultStripeSize,
-		},
-	)
+	dbOption := badger.DefaultOptions(storagePath).
+		WithCompression(options.ZSTD).
+		WithZSTDCompressionLevel(10).
+		WithBlockSize(4 * 1024 * 1024)
+	db, err := badger.Open(dbOption)
 	if err != nil {
 		return nil, err
 	}

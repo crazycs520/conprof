@@ -17,6 +17,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/conprof/conprof/codec"
+	"github.com/dgraph-io/badger/v3"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -112,8 +114,8 @@ func init() {
 
 // scrapePool manages scrapes for sets of targets.
 type scrapePool struct {
-	appendable Appendable
-	logger     log.Logger
+	db     *badger.DB
+	logger log.Logger
 
 	mtx    sync.RWMutex
 	config *config.ScrapeConfig
@@ -129,7 +131,7 @@ type scrapePool struct {
 	newLoop func(*Target, scraper) loop
 }
 
-func newScrapePool(cfg *config.ScrapeConfig, app Appendable, logger log.Logger) *scrapePool {
+func newScrapePool(cfg *config.ScrapeConfig, db *badger.DB, logger log.Logger) *scrapePool {
 	if logger == nil {
 		logger = log.NewNopLogger()
 	}
@@ -145,7 +147,7 @@ func newScrapePool(cfg *config.ScrapeConfig, app Appendable, logger log.Logger) 
 	ctx, cancel := context.WithCancel(context.Background())
 	sp := &scrapePool{
 		cancel:        cancel,
-		appendable:    app,
+		db:            db,
 		config:        cfg,
 		client:        client,
 		activeTargets: map[uint64]*Target{},
@@ -159,7 +161,7 @@ func newScrapePool(cfg *config.ScrapeConfig, app Appendable, logger log.Logger) 
 			s,
 			log.With(logger, "target", t),
 			buffers,
-			app,
+			db,
 		)
 	}
 
@@ -366,9 +368,9 @@ func (s *targetScraper) scrape(ctx context.Context, w io.Writer, profileType str
 			return err
 		}
 		req.Header.Set("User-Agent", userAgentHeader)
-		if header := s.Header();len(header) > 0 {
-			for k,v := range header {
-				req.Header.Set(k,v)
+		if header := s.Header(); len(header) > 0 {
+			for k, v := range header {
+				req.Header.Set(k, v)
 			}
 		}
 
@@ -435,7 +437,7 @@ type scrapeLoop struct {
 	lastScrapeSize int
 	buffers        *pool.Pool
 
-	appendable Appendable
+	db *badger.DB
 
 	ctx       context.Context
 	scrapeCtx context.Context
@@ -448,7 +450,7 @@ func newScrapeLoop(ctx context.Context,
 	sc scraper,
 	l log.Logger,
 	buffers *pool.Pool,
-	appendable Appendable,
+	db *badger.DB,
 ) *scrapeLoop {
 	if l == nil {
 		l = log.NewNopLogger()
@@ -457,13 +459,13 @@ func newScrapeLoop(ctx context.Context,
 		buffers = pool.New(1e3, 1e6, 3, func(sz int) interface{} { return make([]byte, 0, sz) })
 	}
 	sl := &scrapeLoop{
-		target:     t,
-		scraper:    sc,
-		buffers:    buffers,
-		appendable: appendable,
-		stopped:    make(chan struct{}),
-		l:          l,
-		ctx:        ctx,
+		target:  t,
+		scraper: sc,
+		buffers: buffers,
+		db:      db,
+		stopped: make(chan struct{}),
+		l:       l,
+		ctx:     ctx,
 	}
 	sl.scrapeCtx, sl.cancel = context.WithCancel(ctx)
 
@@ -534,18 +536,38 @@ mainLoop:
 			sort.Sort(tl)
 			level.Debug(sl.l).Log("msg", "appending new sample", "labels", tl.String())
 
-			app := sl.appendable.Appender(sl.ctx)
-			_, err := app.Add(tl, timestamp.FromTime(start), buf.Bytes())
+			ts := timestamp.FromTime(start)
+			job := tl.Get("job")
+			tp := tl.Get(ProfileName)
+			instance := tl.Get("instance")
+
+			key := codec.ProfileKey{
+				Ts:       ts,
+				Job:      job,
+				Tp:       tp,
+				Instance: instance,
+			}
+			level.Info(sl.l).Log("msg", "key ----cs----", key)
+			err := sl.db.Update(func(txn *badger.Txn) error {
+				return txn.Set(key.Encode(), buf.Bytes())
+			})
 			if err != nil && errc != nil {
 				level.Debug(sl.l).Log("err", err)
 				errc <- err
 			}
 
-			err = app.Commit()
-			if err != nil && errc != nil {
-				level.Debug(sl.l).Log("err", err)
-				errc <- err
-			}
+			//app := sl.appendable.Appender(sl.ctx)
+			//_, err := app.Add(tl, timestamp.FromTime(start), buf.Bytes())
+			//if err != nil && errc != nil {
+			//	level.Debug(sl.l).Log("err", err)
+			//	errc <- err
+			//}
+			//
+			//err = app.Commit()
+			//if err != nil && errc != nil {
+			//	level.Debug(sl.l).Log("err", err)
+			//	errc <- err
+			//}
 
 			sl.target.health = HealthGood
 			sl.target.lastScrapeDuration = time.Since(start)

@@ -17,10 +17,10 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"github.com/dgraph-io/badger/v3"
 	"io/ioutil"
 	"strings"
 
-	"github.com/conprof/db/storage"
 	"github.com/go-kit/kit/log"
 	"github.com/go-kit/kit/log/level"
 	grpc_prometheus "github.com/grpc-ecosystem/go-grpc-prometheus"
@@ -36,8 +36,6 @@ import (
 
 	conprofapi "github.com/conprof/conprof/api"
 	"github.com/conprof/conprof/config"
-	"github.com/conprof/conprof/pkg/store"
-	"github.com/conprof/conprof/pkg/store/storepb"
 	"github.com/conprof/conprof/scrape"
 )
 
@@ -107,14 +105,15 @@ func registerSampler(m map[string]setupFunc, app *kingpin.Application, name stri
 			}))
 		}
 
-		conn, err := grpc.Dial(*storeAddress, opts...)
-		if err != nil {
-			return probe, err
-		}
-		c := storepb.NewWritableProfileStoreClient(conn)
+		_ = *storeAddress
+		//conn, err := grpc.Dial(*storeAddress, opts...)
+		//if err != nil {
+		//	return probe, err
+		//}
+		//c := storepb.NewWritableProfileStoreClient(conn)
 
-		db := store.NewGRPCAppendable(logger, c)
-		scrapeManager := scrape.NewManager(log.With(log.NewNopLogger(), "component", "scrape-manager"), db)
+		//db := store.NewGRPCAppendable(logger, c)
+		scrapeManager := scrape.NewManager(log.With(log.NewNopLogger(), "component", "scrape-manager"), nil)
 
 		samplerOpts := []SamplerOption{
 			SamplerScraper(scrapeManager),
@@ -125,7 +124,7 @@ func registerSampler(m map[string]setupFunc, app *kingpin.Application, name stri
 			samplerOpts = append(samplerOpts, SamplerConfig(*configFile))
 		}
 
-		s, err := NewSampler(db, reloaders, samplerOpts...)
+		s, err := NewSampler(nil, reloaders, samplerOpts...)
 		if err != nil {
 			return nil, err
 		}
@@ -176,7 +175,7 @@ func managerReloader(logger log.Logger, reloadCh chan struct{}, configFile strin
 
 type Sampler struct {
 	logger        log.Logger
-	db            storage.Appendable
+	db            *badger.DB
 	configFile    string
 	cfg           *config.Config
 	reloaders     *configReloaders
@@ -185,7 +184,7 @@ type Sampler struct {
 
 type SamplerOption func(*Sampler) error
 
-func NewSampler(db storage.Appendable, reloaders *configReloaders, opts ...SamplerOption) (*Sampler, error) {
+func NewSampler(db *badger.DB, reloaders *configReloaders, opts ...SamplerOption) (*Sampler, error) {
 	s := &Sampler{
 		logger:        log.NewNopLogger(),
 		db:            db,

@@ -15,6 +15,7 @@ package scrape
 
 import (
 	"context"
+	"github.com/dgraph-io/badger/v3"
 	"reflect"
 	"sync"
 	"time"
@@ -33,12 +34,12 @@ type Appendable interface {
 }
 
 // NewManager is the Manager constructor
-func NewManager(logger log.Logger, app Appendable) *Manager {
+func NewManager(logger log.Logger, db *badger.DB) *Manager {
 	if logger == nil {
 		logger = log.NewNopLogger()
 	}
 	return &Manager{
-		append:        app,
+		db:            db,
 		logger:        logger,
 		scrapeConfigs: make(map[string]*config.ScrapeConfig),
 		scrapePools:   make(map[string]*scrapePool),
@@ -51,7 +52,7 @@ func NewManager(logger log.Logger, app Appendable) *Manager {
 // when receiving new target groups form the discovery manager.
 type Manager struct {
 	logger    log.Logger
-	append    Appendable
+	db        *badger.DB
 	graceShut chan struct{}
 
 	mtxScrape     sync.Mutex // Guards the fields below.
@@ -114,7 +115,7 @@ func (m *Manager) reload() {
 				level.Error(m.logger).Log("msg", "error reloading target set", "err", "invalid config id:"+setName)
 				return
 			}
-			sp = newScrapePool(scrapeConfig, m.append, log.With(m.logger, "scrape_pool", setName))
+			sp = newScrapePool(scrapeConfig, m.db, log.With(m.logger, "scrape_pool", setName))
 			m.scrapePools[setName] = sp
 		} else {
 			sp = existing

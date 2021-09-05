@@ -6,6 +6,7 @@ require (
 	github.com/NYTimes/gziphandler v1.1.1
 	github.com/conprof/db v0.0.0-20210317165925-a59fb33c527d
 	github.com/cortexproject/cortex v1.9.1-0.20210601081042-d7d87369965a
+	github.com/dgraph-io/badger/v3 v3.2103.1 // indirect
 	github.com/go-kit/kit v0.10.0
 	github.com/gogo/protobuf v1.3.2
 	github.com/gogo/status v1.0.3

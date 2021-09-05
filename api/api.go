@@ -319,15 +319,21 @@ func (a *API) QueryRange(r *http.Request) (interface{}, []error, *ApiError) {
 	startKey, endKey := buildQueryRange(timestamp.FromTime(from), timestamp.FromTime(to), conds)
 
 	res := []Series{}
+
+	type mapKey struct {
+		job      string
+		tp       string
+		instance string
+	}
+	seriesMap := make(map[mapKey]*Series)
+
 	a.db.View(func(txn *badger.Txn) error {
 		it := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer it.Close()
 		prefix := startKey.EncodeForRangeQuery()
 		end := endKey.EncodeForRangeQuery()
-		resSeries := Series{}
-		var lastKey *codec.ProfileKey
 		cnt := 0
-		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
+		for it.Seek(prefix); it.Valid(); it.Next() {
 			item := it.Item()
 			k := item.Key()
 			if bytes.Compare(k, end) >= 0 {
@@ -348,85 +354,31 @@ func (a *API) QueryRange(r *http.Request) (interface{}, []error, *ApiError) {
 			}
 
 			cnt++
-			if cnt > limit {
+			if limit > 0 && cnt > limit {
 				break
 			}
 
-			if len(resSeries.Timestamps) == 0 {
-				resSeries.Labels = buildLabelsFromProfileKey(key)
-				resSeries.Timestamps = append(resSeries.Timestamps, key.Ts)
-				lastKey = key
-				continue
+			mk := mapKey{
+				job:      key.Job,
+				tp:       key.Tp,
+				instance: key.Instance,
 			}
-			if lastKey != nil && lastKey.Job == key.Job &&
-				lastKey.Tp == key.Tp &&
-				lastKey.Instance == key.Instance {
-				resSeries.Timestamps = append(resSeries.Timestamps, key.Ts)
-			} else {
-				if len(resSeries.Timestamps) > 0 {
-					res = append(res, resSeries)
-				}
-				resSeries = Series{}
+
+			series := seriesMap[mk]
+			if series == nil {
+				series = &Series{}
+				series.Labels = buildLabelsFromProfileKey(key)
+				seriesMap[mk] = series
 			}
-			lastKey = key
+			series.Timestamps = append(series.Timestamps, key.Ts)
 		}
 		return nil
 	})
-	//_ = limit
-	//_ = ctx
-	//return nil, nil, &ApiError{Typ: ErrorBadData, Err: fmt.Errorf("no implements")}
-	//q, err := a.db.Querier(ctx, timestamp.FromTime(from), timestamp.FromTime(to))
-	//if err != nil {
-	//	return nil, nil, &ApiError{Typ: ErrorExec, Err: err}
-	//}
-	//
-	//level.Debug(a.logger).Log("query", queryString, "from", from, "to", to)
-	//sel, err := parser.ParseMetricSelector(queryString)
-	//if err != nil {
-	//	return nil, nil, &ApiError{Typ: ErrorBadData, Err: err}
-	//}
-	//
-	//// Record query window
-	//a.queryRangeHist.Observe(to.Sub(from).Seconds())
-	//
-	//set := q.Select(true, &storage.SelectHints{
-	//	Start: timestamp.FromTime(from),
-	//	End:   timestamp.FromTime(to),
-	//	Func:  "timestamps",
-	//}, sel...)
-	//j := 0
-	//limitReached := false
-	//for set.Next() {
-	//	series := set.At()
-	//	ls := series.Labels()
-	//
-	//	resSeries := Series{Labels: ls.Map()}
-	//	i := series.Iterator()
-	//	for i.Next() {
-	//		t, _ := i.At()
-	//		resSeries.Timestamps = append(resSeries.Timestamps, t)
-	//	}
-	//
-	//	if err := i.Err(); err != nil {
-	//		level.Error(a.logger).Log("err", err, "series", ls.String())
-	//	}
-	//
-	//	res = append(res, resSeries)
-	//	j++
-	//	if applyLimit && j == limit {
-	//		limitReached = true
-	//		break
-	//	}
-	//}
-	//if err := set.Err(); err != nil {
-	//	return nil, nil, &ApiError{Typ: ErrorInternal, Err: set.Err()}
-	//}
-	//
-	//warn := set.Warnings()
-	//if limitReached {
-	//	warn = append(warn, fmt.Errorf("retrieved %d series, more available", j))
-	//}
-	//
+
+	for _, series := range seriesMap {
+		res = append(res, *series)
+	}
+
 	return res, nil, nil
 }
 

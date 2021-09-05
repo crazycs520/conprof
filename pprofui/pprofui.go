@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"fmt"
+	"github.com/conprof/conprof/codec"
 	"github.com/dgraph-io/badger/v3"
 	"net/http"
 	"path"
@@ -123,15 +124,38 @@ func (p *pprofUI) PprofView(w http.ResponseWriter, r *http.Request, _ httprouter
 		return nil
 	}
 
+	key := &codec.ProfileKey{Ts: t}
+	for _, label := range m {
+		switch label.Name {
+		case "__name__":
+			key.Tp = label.Value
+		case "job":
+			key.Job = label.Value
+		case "instance":
+			key.Instance = label.Value
+		}
+	}
+
 	storageFetcher := func(_ string, _, _ time.Duration) (*profile.Profile, string, error) {
 		var prof *profile.Profile
-
-		buf, err := p.selectProfile(m, t)
+		var profData []byte
+		err := p.db.View(func(txn *badger.Txn) error {
+			item, err := txn.Get(key.Encode())
+			if err != nil {
+				return err
+			}
+			err = item.Value(func(val []byte) error {
+				profData = make([]byte, len(val))
+				copy(profData, val)
+				return nil
+			})
+			return err
+		})
 		if err != nil {
 			return prof, "", err
 		}
 
-		prof, err = profile.Parse(bytes.NewReader(buf))
+		prof, err = profile.Parse(bytes.NewReader(profData))
 		if err != nil {
 			return prof, "", err
 		}

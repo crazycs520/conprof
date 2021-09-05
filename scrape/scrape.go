@@ -547,7 +547,6 @@ mainLoop:
 				Tp:       tp,
 				Instance: instance,
 			}
-			level.Info(sl.l).Log("msg", "key ----cs----", key)
 			err := sl.db.Update(func(txn *badger.Txn) error {
 				return txn.Set(key.Encode(), buf.Bytes())
 			})

@@ -16,6 +16,7 @@ package main
 import (
 	"context"
 	"github.com/dgraph-io/badger/v3"
+	"net/http"
 	"time"
 
 	"github.com/go-kit/kit/log"
@@ -35,6 +36,7 @@ import (
 	"github.com/conprof/conprof/pkg/store/storepb"
 	"github.com/conprof/conprof/pprofui"
 	"github.com/conprof/conprof/symbol"
+	"github.com/conprof/conprof/web"
 )
 
 // registerWeb registers a web command.
@@ -191,7 +193,7 @@ func (w *Web) Run(_ context.Context, reloadCh chan struct{}) error {
 
 	router.GET("/-/reload", api.Reload)
 	router.GET("/pprof/*remainder", ui.PprofView)
-	//router.NotFound = http.FileServer(web.Assets)
+	router.NotFound = http.FileServer(web.Assets)
 
 	w.mux.Handle("/", router)
 

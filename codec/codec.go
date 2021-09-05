@@ -7,12 +7,11 @@ import (
 )
 
 var (
-	ProfileKeyPrefix         = []byte("p")
-	ProfileKeySep       byte = 255
-	ProfileKeyPrefixLen int  = 9
+	ProfileKeyPrefix           = []byte("p")
+	ProfileKeyPrefixLen        = 1
+	ProfileKeySep         byte = 255
+	ProfileKeyPrefixIDLen int  = 9
 )
-
-var invalidProfileKeyErr = fmt.Errorf("profile key %b is invalid")
 
 type ProfileKey struct {
 	Ts       int64
@@ -54,9 +53,10 @@ func (key *ProfileKey) EncodeForRangeQuery() []byte {
 }
 
 func DecodeProfileKey(key []byte) (*ProfileKey, error) {
-	if len(key) < ProfileKeyPrefixLen {
-		return nil, invalidProfileKeyErr
+	if len(key) < ProfileKeyPrefixIDLen {
+		return nil, fmt.Errorf("profile key %b is invalid", key)
 	}
+	key = key[ProfileKeyPrefixLen:]
 	key, ts, err := DecodeInt(key)
 	if err != nil {
 		return nil, err
@@ -64,7 +64,7 @@ func DecodeProfileKey(key []byte) (*ProfileKey, error) {
 
 	fields := decodeStrings(key)
 	if len(fields) != 3 {
-		return nil, invalidProfileKeyErr
+		return nil, fmt.Errorf("profile key %b is invalid", key)
 	}
 	return &ProfileKey{
 		Ts:       ts,
@@ -87,12 +87,15 @@ func decodeStrings(key []byte) []string {
 	for _, b := range key {
 		if b == ProfileKeySep {
 			if len(w) > 0 {
-				w = w[:0]
 				result = append(result, string(w))
+				w = w[:0]
 			}
 			continue
 		}
 		w = append(w, b)
+	}
+	if len(w) > 0 {
+		result = append(result, string(w))
 	}
 	return result
 }

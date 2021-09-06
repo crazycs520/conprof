@@ -24,8 +24,8 @@ func (key *ProfileKey) Encode() []byte {
 	buf := make([]byte, 0, 16)
 	buf = append(buf, ProfileKeyPrefix...)
 	buf = EncodeInt(buf, key.Ts)
-	buf = appendString(buf, key.Job)
 	buf = appendString(buf, key.Tp)
+	buf = appendString(buf, key.Job)
 	buf = appendString(buf, key.Instance)
 	return buf
 }
@@ -37,14 +37,14 @@ func (key *ProfileKey) EncodeForRangeQuery() []byte {
 		return buf
 	}
 	buf = EncodeInt(buf, key.Ts)
-	if len(key.Job) == 0 {
-		return buf
-	}
-	buf = appendString(buf, key.Job)
 	if len(key.Tp) == 0 {
 		return buf
 	}
 	buf = appendString(buf, key.Tp)
+	if len(key.Job) == 0 {
+		return buf
+	}
+	buf = appendString(buf, key.Job)
 	if len(key.Instance) == 0 {
 		return buf
 	}
@@ -68,8 +68,8 @@ func DecodeProfileKey(key []byte) (*ProfileKey, error) {
 	}
 	return &ProfileKey{
 		Ts:       ts,
-		Job:      fields[0],
-		Tp:       fields[1],
+		Tp:       fields[0],
+		Job:      fields[1],
 		Instance: fields[2],
 	}, nil
 }

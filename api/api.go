@@ -235,6 +235,10 @@ func (c *QueryCondition) Match(key *codec.ProfileKey) bool {
 }
 
 func parseQueryCondition(query string) ([]QueryCondition, error) {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return nil, nil
+	}
 	result := make([]QueryCondition, 0, 2)
 	conds := strings.Split(query, ",")
 	for _, cond := range conds {
@@ -307,9 +311,9 @@ func (a *API) QueryRange(r *http.Request) (interface{}, []error, *ApiError) {
 	}
 
 	queryString := r.URL.Query().Get("query")
-	if queryString == "" {
-		return nil, nil, &ApiError{Typ: ErrorBadData, Err: errors.New("query cannot be empty")}
-	}
+	//if queryString == "" {
+	//	return nil, nil, &ApiError{Typ: ErrorBadData, Err: errors.New("query cannot be empty")}
+	//}
 
 	conds, err := parseQueryCondition(queryString)
 	if err != nil {

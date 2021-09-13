@@ -7,6 +7,8 @@ scrape_configs:
       profile:
         enabled: true
         seconds: 5
+      threadcreate:
+        enabled: false
   static_configs:
   - targets: ['172.16.5.40:10189']
 
@@ -18,17 +20,6 @@ scrape_configs:
       profile:
         enabled: true
         seconds: 5
-        path: '/pd/api/v1/debug/pprof/profile'
-      allocs:
-        path: '/pd/api/v1/debug/pprof/allocs'
-      block:
-        path: '/pd/api/v1/debug/pprof/block'
-      goroutine:
-        path: '/pd/api/v1/debug/pprof/goroutine'
-      heap: 
-        path: '/pd/api/v1/debug/pprof/heap'
-      mutex:
-        path: '/pd/api/v1/debug/pprof/mutex'
       threadcreate:
         enabled: false
   static_configs:

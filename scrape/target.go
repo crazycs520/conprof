@@ -65,7 +65,7 @@ func NewTarget(labels, discoveredLabels labels.Labels, params url.Values, header
 		labels:           labels,
 		discoveredLabels: discoveredLabels,
 		params:           params,
-		header: header,
+		header:           header,
 		health:           HealthUnknown,
 	}
 }
@@ -110,8 +110,8 @@ func (t *Target) Params() url.Values {
 
 func (t *Target) Header() map[string]string {
 	header := make(map[string]string, len(t.header))
-	for k, v:= range t.header{
-		header[k]=v
+	for k, v := range t.header {
+		header[k] = v
 	}
 	return header
 }

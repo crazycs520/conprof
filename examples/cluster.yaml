@@ -7,6 +7,8 @@ scrape_configs:
       profile:
         enabled: true
         seconds: 5
+      goroutine:
+        debug: 2
       threadcreate:
         enabled: false
   static_configs:
@@ -20,6 +22,8 @@ scrape_configs:
       profile:
         enabled: true
         seconds: 5
+      goroutine:
+        debug: 2
       threadcreate:
         enabled: false
   static_configs:

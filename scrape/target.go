@@ -245,10 +245,11 @@ func (ts Targets) Less(i, j int) bool { return ts[i].URL().String() < ts[j].URL(
 func (ts Targets) Swap(i, j int)      { ts[i], ts[j] = ts[j], ts[i] }
 
 const (
-	ProfilePath        = "__profile_path__"
-	ProfileName        = "__name__"
-	ProfileProfileType = "profile"
-	ProfileTraceType   = "trace"
+	ProfilePath          = "__profile_path__"
+	ProfileName          = "__name__"
+	ProfileProfileType   = "profile"
+	ProfileGoroutineType = "goroutine"
+	ProfileTraceType     = "trace"
 )
 
 // populateLabels builds a label set from the given label set and scrape configuration.
@@ -384,6 +385,14 @@ func targetsFromGroup(tg *targetgroup.Group, cfg *config.ScrapeConfig) ([]*Targe
 						params = url.Values{}
 					}
 					params.Add("seconds", strconv.Itoa(cfg.ProfilingConfig.PprofConfig[ProfileProfileType].Seconds))
+				case ProfileGoroutineType:
+					if params == nil {
+						params = url.Values{}
+					}
+					debug := cfg.ProfilingConfig.PprofConfig[ProfileGoroutineType].Debug
+					if debug > 0 {
+						params.Add("debug", strconv.Itoa(debug))
+					}
 				}
 				header := cfg.ProfilingConfig.PprofConfig[profType].Header
 				targets = append(targets, NewTarget(lbls, origLabels, params, header))

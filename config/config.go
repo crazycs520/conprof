@@ -193,6 +193,9 @@ func (c *ScrapeConfig) UnmarshalYAML(unmarshal func(interface{}) error) error {
 			if unmarshalled.ProfilingConfig.PprofConfig[pt].Seconds == 0 {
 				unmarshalled.ProfilingConfig.PprofConfig[pt].Seconds = pc.Seconds
 			}
+			if unmarshalled.ProfilingConfig.PprofConfig[pt].Debug == 0 {
+				unmarshalled.ProfilingConfig.PprofConfig[pt].Debug= pc.Debug
+			}
 		}
 	}
 
@@ -246,6 +249,7 @@ type PprofProfilingConfig struct {
 	Enabled *bool             `yaml:"enabled,omitempty"`
 	Path    string            `yaml:"path,omitempty"`
 	Seconds int               `yaml:"seconds"`
+	Debug   int               `yaml:"debug"`
 	Header  map[string]string `yaml:"header,omitempty"`
 }
 

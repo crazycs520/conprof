@@ -7,5 +7,7 @@ scrape_configs:
       profile:
         enabled: true
         seconds: 5
+      goroutine:
+        debug: 2
   static_configs:
   - targets: ['0.0.0.0:10080']

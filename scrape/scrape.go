@@ -416,6 +416,11 @@ func (s *targetScraper) scrape(ctx context.Context, w io.Writer, profileType str
 		fileName = path.Join("/tmp/profile-data-file", fileName)
 		ioutil.WriteFile(fileName, b, 0644)
 
+		if s.labels.Get(ProfileName) == ProfileGoroutineType {
+			_, err = w.Write(b)
+			return err
+		}
+
 		p, err := profile.ParseData(b)
 		if err != nil {
 			return errors.Wrap(err, "failed to parse target's pprof profile")

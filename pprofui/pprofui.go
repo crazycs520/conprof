@@ -136,6 +136,30 @@ func (p *pprofUI) PprofView(w http.ResponseWriter, r *http.Request, _ httprouter
 		}
 	}
 
+	if key.Tp == "goroutine" {
+		var profData []byte
+		err := p.db.View(func(txn *badger.Txn) error {
+			item, err := txn.Get(key.Encode())
+			if err != nil {
+				return err
+			}
+			err = item.Value(func(val []byte) error {
+				profData = make([]byte, len(val))
+				copy(profData, val)
+				return nil
+			})
+			return err
+		})
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="goroutine"`+"_"+key.Job+"_"+key.Instance+"_"+time.Now().Format("20060102150405")))
+		_, _ = w.Write(profData)
+		return
+	}
+
 	storageFetcher := func(_ string, _, _ time.Duration) (*profile.Profile, string, error) {
 		var prof *profile.Profile
 		var profData []byte

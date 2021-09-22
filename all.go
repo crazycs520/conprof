@@ -142,7 +142,8 @@ func runAll(
 	dbOption := badger.DefaultOptions(storagePath).
 		WithCompression(options.ZSTD).
 		WithZSTDCompressionLevel(10).
-		WithBlockSize(4 * 1024 * 1024)
+		WithBlockSize(8 * 1024 * 1024).
+		WithValueThreshold(8 * 1024 * 1024)
 	db, err := badger.Open(dbOption)
 	if err != nil {
 		return nil, err

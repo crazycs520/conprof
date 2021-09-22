@@ -40,3 +40,5 @@ require (
 replace gopkg.in/alecthomas/kingpin.v2 => github.com/alecthomas/kingpin v1.3.8-0.20210301060133-17f40c25f497
 
 replace github.com/prometheus/prometheus => github.com/prometheus/prometheus v1.8.2-0.20210519120135-d95b0972505f
+
+replace github.com/dgraph-io/badger/v3 => github.com/crazycs520/badger/v3 v3.0.0-20210922063928-f25457a6a6fd
